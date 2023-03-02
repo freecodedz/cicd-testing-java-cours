@@ -1,0 +1,108 @@
+def ENV_NAME = getEnvName(env.BRANCH_NAME)
+def CONTAINER_NAME = "calculator" + ENV_NAME
+def CONTAINER_TAG = getTag(env.BUILD_NUMBER, en.BRANCH_NAME)
+def HTTP_PORT = getHTTPPort(env.BRANCH_NAME)
+def EMAIL_RECIPIENTS = "blahouaoula@gmail.com"
+
+node {
+    try {
+        stage('Initialize') {
+            def dockerHome = tool 'dockerlatest'
+            def mavenHome = tool 'mavenlatest'
+            env.PATH = "${dockerHome}/bin:${mavenHome}/bin:${env.PATH}"
+        }
+
+        stage('checkout') {
+            checkout scm
+        }
+
+        stage('Build with test') {
+            sh "mvn clean install"
+        }
+
+        stage('sonarqube analysis') {
+            withSonarQubeEnv('localhost_sonarqube') {
+                sh "mvn sonar:sonar -Dintegration-tests.skip=true  -Dmaver.test.failure.ignore=true"
+            }
+            timeout(time: 1, unit: 'MINUTES') {
+                def qg = waitForQualityGate()
+                if(qg.status != 'ok') {
+                    error "Pipeline aborted due to quality gate failure: ${qg.status}"
+                }
+            }
+        }
+
+        stage('image prune')    {
+            imagePrune(CONTAINER_NAME)
+        }
+
+        stage('image build') {
+            imageBuild(CONTAINER_NAME, CONTAINER_TAG)
+        }
+
+        stage('push to docker registry'){
+            withCredentials([usernamePassword(credentialsId: 'dockerCredentials', usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD')]) {
+                pushToImage(CONTAINER_NAME, CONTAINER_TAG, USERNAME, PASSWORD)
+            }
+        }
+
+         stage('Run App'){
+            withCredentials([usernamePassword(credentialsId: 'dockerCredentials', usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD')]) {
+                runApp(CONTAINER_NAME, CONTAINER_TAG, USERNAME, HTTP_PORT, ENV_NAME)
+            }
+        }
+    }finally {
+        deleteDir()
+        sendEmail(EMAIL_RECIPIENTS)
+    }
+}
+
+def imagePrune( String containerName){
+    try {
+        sh "docker image prune -f"
+        sh "docker stop $containerName"
+    }catch (ignored){
+    }
+}
+
+def imageBuild( String containerName, String tag){
+        sh "docker build -t $containerName:$tag -t $containerName --pull --no-cache ."
+        echo "image build complete"
+
+}
+
+def pushToImage( String containerName, String tag, dockerUser, dockerPassword){
+        sh "docker login -u $dockerUser -p $dockerPassword"
+        sh "docker tag $containerName:$tag $dockerUser/$containerName:$tag"
+        sh "docker push $dockerUser/$containerName:$tag"
+        echo "image push complete"
+}
+
+def runApp( String containerName, String tag, dockerHubUser, httpPort, envName){
+
+        sh "docker pull $dockerHubUser/$containerName"
+        sh "docker run  --rm --env SPRING_ACTIVE_PROFILES=$envName -d -p $httpPort:$httpPort --name $containerName $dockerHubUser/$containerName:$tag"
+        echo "app started on port ${httpPort}"
+}
+
+String getEnvName(String branchName) {
+    if(branchName = 'master'){
+        return 'prod'
+    }
+    return (branchName == 'develop') ? 'uat' : 'dev'
+}
+
+String getHTTPPort(String branchName) {
+    if(branchName = 'master'){
+        return '9003'
+    }
+    return (branchName == 'develop') ? '9002' : '9001'
+}
+
+String getTag(String buildNumber, String branchName) {
+    if(branchName = 'master'){
+        return buildNumber + 'stable'
+    }
+            return buildNumber + 'unstable'
+
+}
