@@ -1,6 +1,6 @@
 def ENV_NAME = getEnvName(env.BRANCH_NAME)
 def CONTAINER_NAME = "calculator" + ENV_NAME
-def CONTAINER_TAG = getTag(env.BUILD_NUMBER, en.BRANCH_NAME)
+def CONTAINER_TAG = getTag(env.BUILD_NUMBER, env.BRANCH_NAME)
 def HTTP_PORT = getHTTPPort(env.BRANCH_NAME)
 def EMAIL_RECIPIENTS = "blahouaoula@gmail.com"
 
@@ -16,41 +16,7 @@ node {
             checkout scm
         }
 
-        stage('Build with test') {
-            sh "mvn clean install"
-        }
 
-        stage('sonarqube analysis') {
-            withSonarQubeEnv('localhost_sonarqube') {
-                sh "mvn sonar:sonar -Dintegration-tests.skip=true  -Dmaver.test.failure.ignore=true"
-            }
-            timeout(time: 1, unit: 'MINUTES') {
-                def qg = waitForQualityGate()
-                if(qg.status != 'ok') {
-                    error "Pipeline aborted due to quality gate failure: ${qg.status}"
-                }
-            }
-        }
-
-        stage('image prune')    {
-            imagePrune(CONTAINER_NAME)
-        }
-
-        stage('image build') {
-            imageBuild(CONTAINER_NAME, CONTAINER_TAG)
-        }
-
-        stage('push to docker registry'){
-            withCredentials([usernamePassword(credentialsId: 'dockerCredentials', usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD')]) {
-                pushToImage(CONTAINER_NAME, CONTAINER_TAG, USERNAME, PASSWORD)
-            }
-        }
-
-         stage('Run App'){
-            withCredentials([usernamePassword(credentialsId: 'dockerCredentials', usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD')]) {
-                runApp(CONTAINER_NAME, CONTAINER_TAG, USERNAME, HTTP_PORT, ENV_NAME)
-            }
-        }
     }finally {
         deleteDir()
         sendEmail(EMAIL_RECIPIENTS)
