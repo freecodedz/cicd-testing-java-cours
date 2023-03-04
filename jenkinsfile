@@ -16,6 +16,11 @@ node {
             checkout scm
         }
 
+        stage('Build with test') {
+            sh "mvn clean install"
+        }
+
+        
 
     }finally {
         deleteDir()
