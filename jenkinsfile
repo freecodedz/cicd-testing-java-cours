@@ -34,12 +34,15 @@ node {
                 }
             }
         }
+           stage('image prune')    {
+                imagePrune(CONTAINER_NAME)
+            }
 
+            stage('image build') {
+                imageBuild(CONTAINER_NAME, CONTAINER_TAG)
+            }
 
-
-
-
-
+          
     }finally {
         deleteDir()
         sendEmail(EMAIL_RECIPIENTS)
